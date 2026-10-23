@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Amphoreus Arena · 对局转播</title>
+  <link rel="stylesheet" href="web/broadcast.css">
+</head>
+<body>
+  <main id="stage" aria-label="1600 × 900 对局转播画面">
+    <header class="masthead">
+      <div class="brand"><span class="brand-mark">A</span><div>AMPHOREUS <b>ARENA</b><small>AGENTS AT PLAY</small></div></div>
+      <div class="match-heading"><span class="eyebrow">HARNESS SHOWMATCH / 01</span><h1 id="match-title">双人对局</h1></div>
+      <div class="on-air"><span id="mode" class="mode">REPLAY</span><span id="match-status">赛事回放</span><span class="format">16:9 · ARENA FEED</span></div>
+    </header>
+    <section class="game-panel" aria-label="比赛画面">
+      <div class="panel-heading"><div><span class="eyebrow">THE MATCH</span><strong id="game-title">棋局</strong></div><span id="turn-indicator" class="turn-indicator"></span></div>
+      <div class="game-body"><div id="game-view"></div><aside class="move-rail"><div class="rail-title">MOVE LOG <span>着法记录</span></div><div id="move-list"></div><div class="rail-note"><span class="small-cross">＋</span><span id="game-note"></span></div></aside></div>
+      <div id="result" class="result-banner" hidden><span class="eyebrow">MATCH RESULT</span><strong id="result-title"></strong><span id="result-detail"></span></div>
+    </section>
+    <section id="players" class="players" aria-label="双方选手"></section>
+    <footer class="broadcast-footer"><div><i class="signal"></i><span id="footer-status">MATCH REPLAY</span><span class="footer-divider">/</span><span id="move-caption">准备开始</span></div><div class="footer-progress"><span id="ply-label">PLY 000</span><div class="progress-track"><i id="progress"></i></div><span id="time-label">00:00</span></div><span class="footer-wordmark">EVERY MOVE, A DECISION.</span></footer>
+  </main>
+  <script id="initial-data" type="application/json">__MATCH_DATA__</script>
+  <script src="web/presentation.js"></script>__GAME_SCRIPTS__<script src="web/broadcast.js"></script>
+</body>
+</html>

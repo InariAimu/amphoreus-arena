@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Amphoreus Arena · 回放控制台</title><link rel="stylesheet" href="web/replay.css"></head>
+<body>
+  <header class="console-heading"><div><span class="console-mark">A</span><strong>Amphoreus Arena</strong><span class="console-label">回放控制台</span></div><a id="clean-link" href="broadcast.html?follow=replay" target="_blank">打开独立展示页 ↗</a></header>
+  <main><div class="preview"><iframe id="feed" title="1600 × 900 对局转播预览" src="broadcast.html?embedded=1"></iframe></div>
+    <section class="controls" aria-label="回放控制"><div class="transport"><button id="start" title="回到开局">|◀</button><button id="prev" title="上一手">←</button><button id="play" class="primary">播放</button><button id="next" title="下一手">→</button><span id="position">0 / 0</span><input id="seek" aria-label="回放进度" type="range" min="0" value="0"><select id="speed" aria-label="播放速度"><option value="6000">6 秒 / 手 · 展示</option><option value="3000" selected>3 秒 / 手</option><option value="1200">1.2 秒 / 手 · 快览</option></select><button id="live">跟随最新</button></div><div class="console-meta"><span id="status"></span><span>1600 × 900 · 时间为真实对局累计用时 · 气泡为落子说明</span></div></section>
+    <section class="notes"><div><span class="note-label">BROADCAST</span><p>独立展示页会同步这里的播放与跳步。用于直播时，打开 <a href="broadcast.html" target="_blank">实时展示页</a>，按 1600 × 900 采集。</p></div><div><span class="note-label">TELEMETRY</span><p>DSH：上下文占用；Codex：原生会话累计输入 + 输出，包含缓存输入。两者口径不同，未提供的数据以 — 显示。</p></div><details><summary>当前局面与原始记录</summary><pre id="fen"></pre><a href="match.json" target="_blank">match.json</a> · <a href="events.jsonl" target="_blank">events.jsonl</a><p id="explanation"></p></details></section>
+  </main>
+  <script id="initial-data" type="application/json">__MATCH_DATA__</script><script src="web/replay.js"></script>
+</body></html>

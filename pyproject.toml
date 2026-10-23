@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "amphoreus-arena"
+version = "0.1.0"
+description = "A small, observable arena for native agent harnesses"
+requires-python = ">=3.10"
+dependencies = ["pyffish==0.0.90", "Pillow>=10,<13"]
+
+[project.optional-dependencies]
+video = ["imageio-ffmpeg>=0.6,<0.7"]
+
+[project.scripts]
+arena = "amphoreus_arena.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+amphoreus_arena = ["replay.html", "web/*", "web/avatars/*.png", "*.patch.yml"]

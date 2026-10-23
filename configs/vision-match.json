@@ -1,0 +1,19 @@
+{
+  "game": "xiangqi",
+  "max_plies": null,
+  "turn_timeout": null,
+  "startup_timeout": 60,
+  "observation_mode": "text_image",
+  "red": {
+    "kind": "dsh",
+    "home": "E:/dsh",
+    "patches": ["configs/dsh-vision.patch.yml"],
+    "model": "[\"deepseek-official\",\"deepseek-flash\"]",
+    "reasoning_effort": "low"
+  },
+  "black": {
+    "kind": "codex",
+    "model": "gpt-6-astra",
+    "reasoning_effort": "low"
+  }
+}

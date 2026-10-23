@@ -1,0 +1,4 @@
+- id: acp
+  config:
+    provider: deepseek-official
+    model: deepseek-flash

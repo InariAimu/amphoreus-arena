@@ -1,0 +1,8 @@
+{
+  "game": "xiangqi",
+  "max_plies": null,
+  "turn_timeout": 180,
+  "observation_mode": "text",
+  "red": {"kind": "dsh", "reasoning_effort": "low"},
+  "black": {"kind": "codex", "model": "gpt-6-astra", "reasoning_effort": "low"}
+}

@@ -1,0 +1,17 @@
+{
+  "game": "go",
+  "game_options": {"board_size": 19, "komi": 7.5, "rules": "area-positional-agreement-v1"},
+  "max_plies": 4,
+  "turn_timeout": null,
+  "startup_timeout": 60,
+  "observation_mode": "text_image",
+  "players": {
+    "black": {
+      "kind": "dsh",
+      "patches": ["configs/dsh-vision.patch.yml"],
+      "model": "[\"deepseek-official\",\"deepseek-flash\"]",
+      "reasoning_effort": "low"
+    },
+    "white": {"kind": "codex", "model": "gpt-6-astra", "reasoning_effort": "low"}
+  }
+}

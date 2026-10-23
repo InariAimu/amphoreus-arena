@@ -1,0 +1,17 @@
+{
+  "timeout": null,
+  "players": {
+    "dsh": {
+      "kind": "dsh",
+      "home": "E:/dsh",
+      "patches": ["configs/dsh-vision.patch.yml"],
+      "model": "[\"deepseek-official\",\"deepseek-flash\"]",
+      "reasoning_effort": "low"
+    },
+    "codex": {
+      "kind": "codex",
+      "model": "gpt-6-astra",
+      "reasoning_effort": "low"
+    }
+  }
+}
