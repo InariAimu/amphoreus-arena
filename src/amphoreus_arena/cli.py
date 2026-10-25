@@ -35,10 +35,20 @@ async def run(args):
     if getattr(args, "game", None):
         config["game"] = args.game
     plugin, game, options, player_configs, presentation = configure_game(config, random_players=args.random)
+    if plugin.game_id == "go":
+        player_configs = {side: {"allow_auxiliary_tools": True, **player} for side, player in player_configs.items()}
+    if any(type(p.get("allow_auxiliary_tools", False)) is not bool for p in player_configs.values()):
+        raise ValueError("allow_auxiliary_tools must be a boolean")
     max_plies = None if args.until_end else args.max_plies if args.max_plies is not None else config.get("max_plies", 12)
     timeout = None if args.no_timeout else args.timeout if args.timeout is not None else config.get("turn_timeout")
     startup_timeout = config.get("startup_timeout", 60)
     observation_mode = args.observation_mode or config.get("observation_mode", "text_image")
+    native_go = plugin.game_id == "go" and all(p["kind"] in ("dsh", "codex") for p in player_configs.values())
+    prompt_mode = getattr(args, "prompt_mode", None) or config.get("prompt_mode", "incremental" if native_go else "full")
+    if args.random:
+        prompt_mode = "full"
+    if prompt_mode not in ("full", "incremental") or (prompt_mode == "incremental" and not native_go):
+        raise ValueError("incremental prompt_mode requires persistent dsh/codex Go players")
     if ((max_plies is not None and max_plies < 1) or (timeout is not None and timeout <= 0)
             or startup_timeout <= 0):
         raise ValueError("max_plies and turn_timeout must be positive or null; startup_timeout must be positive")
@@ -51,7 +61,7 @@ async def run(args):
     players = {side: make_harness(player_configs[side], directory / side) for side in plugin.player_ids}
     runner = MatchRunner(game, players, plugin.create_renderer(), directory, max_plies, timeout,
                          observation_mode=observation_mode, observation_renderer=plugin.observation_renderer,
-                         startup_timeout=startup_timeout)
+                         startup_timeout=startup_timeout, prompt_mode=prompt_mode)
     runner.record["game_options"] = options
     runner.record["presentation"] = presentation
     print(f"Match: {directory}\nView: {directory / 'replay.html'}", flush=True)
@@ -59,6 +69,41 @@ async def run(args):
     print(json.dumps({"status": record["status"], "plies": len(record["turns"]),
                       "stop_reason": record["stop_reason"], "output": str(directory)}, ensure_ascii=False))
     return 1 if record["status"] == "failed" else 0
+
+
+async def resume(args):
+    directory = args.directory.resolve()
+    record = json.loads((directory / "match.json").read_text(encoding="utf-8"))
+    config = load_config(args.config)
+    plugin, game, options, configs, _ = configure_game(config)
+    if options != record["game_options"]:
+        raise ValueError("Resume game options must match the existing match")
+    for side, config_player in configs.items():
+        old = record["players"][side]
+        model = config_player.get("model")
+        expected = json.dumps([old.get("provider"), old["model"]], separators=(",", ":")) if old["kind"] == "dsh" else old["model"]
+        actual = json.dumps(json.loads(model), separators=(",", ":")) if old["kind"] == "dsh" and model else model
+        if (config_player["kind"] != old["kind"] or actual != expected
+                or config_player.get("reasoning_effort", "low") != old["reasoning_effort"]
+                or config_player.get("allow_auxiliary_tools", plugin.game_id == "go") != old.get("allow_auxiliary_tools", False)):
+            raise ValueError("Resume requires the original models, effort and tool policy")
+        config_player.setdefault("allow_auxiliary_tools", plugin.game_id == "go")
+    players = {side: make_harness(configs[side], directory / side) for side in plugin.player_ids}
+    runner = MatchRunner(game, players, plugin.create_renderer(), directory, None, record["turn_timeout"],
+                         observation_mode=record["observation_mode"], observation_renderer=plugin.observation_renderer,
+                         startup_timeout=record["startup_timeout"], prompt_mode=record["prompt_mode"])
+    retry_failed = getattr(args, "retry_failed", False)
+    retry_illegal = getattr(args, "retry_illegal", False)
+    backup = directory / f"checkpoint-{len(record['turns']):04d}.json"
+    if not (retry_failed or retry_illegal) and backup.exists():
+        raise ValueError("Resume checkpoint already exists")
+    runner.restore(record, retry_failed=retry_failed, retry_illegal=retry_illegal)
+    if not (retry_failed or retry_illegal):
+        backup.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
+    result = await runner.run()
+    print(json.dumps({"status":result["status"], "plies":len(result["turns"]),
+                      "stop_reason":result["stop_reason"], "output":str(directory)}))
+    return 1 if result["status"] == "failed" else 0
 
 
 def main():
@@ -76,7 +121,17 @@ def main():
     timeouts.add_argument("--no-timeout", action="store_true", help="Disable the per-move inference timeout")
     run_parser.add_argument("--observation-mode", choices=["text", "text_image"],
                             help="Override player input mode (default: text_image)")
+    run_parser.add_argument("--prompt-mode", choices=["full", "incremental"],
+                            help="Go native sessions default to incremental updates after the first input")
     run_parser.add_argument("--random", action="store_true")
+    resume_parser = commands.add_parser("resume", help="Resume a clean stop or explicitly verified failure with the same native sessions, without a ply cap")
+    resume_parser.add_argument("directory", type=Path)
+    resume_parser.add_argument("--config", required=True)
+    recovery_policy = resume_parser.add_mutually_exclusive_group()
+    recovery_policy.add_argument("--retry-failed", action="store_true",
+                               help="Explicitly retry a verified Codex capacity failure; archive it and resynchronize the same session")
+    recovery_policy.add_argument("--retry-illegal", action="store_true",
+                               help="Explicitly retry a verified, uncommitted DSH illegal Go point; archive and explain the rejection with a board resync")
     doctor = commands.add_parser("doctor", help="Check local dependencies and executable paths; no inference")
     doctor.add_argument("--config")
     export_parser = commands.add_parser("export", help="Export existing frames without calling any model")
@@ -89,9 +144,9 @@ def main():
     replay = commands.add_parser("replay", help="Rebuild display pages and recover usage from existing logs; no inference")
     replay.add_argument("directory", type=Path)
     args = parser.parse_args()
-    if args.command == "run":
+    if args.command in ("run", "resume"):
         try:
-            sys.exit(asyncio.run(run(args)))
+            sys.exit(asyncio.run(run(args) if args.command == "run" else resume(args)))
         except KeyboardInterrupt:
             sys.exit(130)
     elif args.command == "export":

@@ -31,21 +31,29 @@ class MatchRunner:
                  directory: Path, max_plies: int | None, turn_timeout: float | None,
                  *, observation_mode: str = "text",
                  observation_renderer: ObservationRenderer | None = None,
-                 startup_timeout: float = 60):
+                 startup_timeout: float = 60, prompt_mode: str = "full"):
         if observation_mode not in ("text", "text_image"):
             raise ValueError("observation_mode must be text or text_image")
         if observation_mode == "text_image" and observation_renderer is None:
             raise ValueError("text_image requires an observation renderer for this game")
+        if prompt_mode not in ("full", "incremental"):
+            raise ValueError("prompt_mode must be full or incremental")
+        if prompt_mode == "incremental" and game.game_id != "go":
+            raise ValueError("incremental inputs currently require Go")
         self.game, self.players, self.renderer = game, players, renderer
         self.directory = directory
         self.max_plies, self.turn_timeout = max_plies, turn_timeout
         self.observation_mode, self.observation_renderer = observation_mode, observation_renderer
         self.startup_timeout = startup_timeout
+        self.prompt_mode = prompt_mode
         self.game_tools = None
+        self.recovery_turn = None
+        self.recovery_evidence = None
         self.record = {"schema_version": 1, "game_id": game.game_id, "started_at": now(),
                        "status": "starting", "stop_reason": None, "result": None,
                        "max_plies": max_plies, "turn_timeout": turn_timeout,
                        "startup_timeout": startup_timeout, "observation_mode": observation_mode,
+                       "prompt_mode": prompt_mode,
                        "players": {k: v.metadata for k, v in players.items()},
                        "snapshots": [], "turns": [], "error": None}
         (directory / "frames").mkdir(parents=True, exist_ok=True)
@@ -54,10 +62,26 @@ class MatchRunner:
     def prepare_input(self, ply: int):
         # Capture the pre-move state, never the post-move audience frame.
         state = deepcopy(self.game.snapshot())
-        prompt = self.game.prompt()
-        schema = self.game.action_schema()
+        details = {}
+        if self.prompt_mode == "incremental":
+            from .go_session import session_input, recovery_input
+            if self.recovery_turn == ply:
+                rejection = self.recovery_evidence if self.recovery_evidence.get("reason") == "illegal_move" else None
+                prompt, schema, details = recovery_input(self.game, self.record["turns"], self.record["snapshots"], rejection=rejection)
+            else:
+                prompt, schema, details = session_input(self.game, self.record["turns"], self.record["snapshots"])
+            player = self.players[self.game.current_player]
+            if details["kind"] in ("delta", "recovery") and player.metadata["kind"] in ("dsh", "codex"):
+                previous = next(t for t in reversed(self.record["turns"]) if t["player"] == self.game.current_player)
+                session_id = player.metadata.get("session_id")
+                if not session_id or session_id != previous.get("session_id"):
+                    raise RuntimeError("Cannot send incremental input to a missing or changed harness session")
+        else:
+            prompt = self.game.prompt()
+            schema = self.game.action_schema()
         images, attachments = [], []
-        if self.observation_mode == "text_image":
+        mode = "text" if details.get("kind") in ("delta", "recovery") else self.observation_mode
+        if mode == "text_image":
             relative = f"observations/{ply:04d}.png"
             path = self.directory / relative
             self.observation_renderer(state, path)
@@ -70,13 +94,67 @@ class MatchRunner:
         relative = f"observations/{ply:04d}.prompt.txt"
         data = prompt.encode("utf-8")
         (self.directory / relative).write_bytes(data)
-        observation = {"mode": self.observation_mode, "source_ply": len(self.record["turns"]),
-                       "prompt": {"path": relative, "sha256": hashlib.sha256(data).hexdigest()},
+        observation = {"mode": mode, "source_ply": len(self.record["turns"]), **details,
+                       "prompt": {"path": relative, "sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data)},
                        "images": attachments}
         (self.directory / f"observations/{ply:04d}.json").write_text(
             json.dumps({**observation, "state": state, "action_schema": schema}, ensure_ascii=False, indent=2),
             encoding="utf-8")
         return prompt, schema, images, observation
+
+    def restore(self, record, *, retry_failed=False, retry_illegal=False):
+        """Resume a clean stop or an explicitly verified uncommitted failure."""
+        failure = None
+        if retry_failed and retry_illegal:
+            raise ValueError("Select one explicit recovery policy")
+        if retry_illegal:
+            from .recovery import verify_illegal_attempt
+            failure = verify_illegal_attempt(self.directory, record)
+        elif retry_failed:
+            from .recovery import verify_failed_attempt
+            failure = verify_failed_attempt(self.directory, record)
+        elif (record.get("status") != "stopped" or record.get("stop_reason") != "max_plies"
+                or record.get("result") is not None or record.get("active_turn")
+                or not record.get("ended_at")):
+            raise ValueError("Resume requires a completed max_plies stop without a result or active turn")
+        if record["game_id"] != self.game.game_id or record["prompt_mode"] != self.prompt_mode:
+            raise ValueError("Resume game and prompt mode must match")
+        turns, snapshots = record["turns"], record["snapshots"]
+        if len(snapshots) != len(turns) + 1:
+            raise ValueError("Invalid resume snapshot count")
+        game = deepcopy(self.game)
+        if snapshots[0]["state"] != game.snapshot():
+            raise ValueError("Resume initial state does not match")
+        for i, turn in enumerate(turns, 1):
+            if turn["ply"] != i or turn["player"] != game.current_player:
+                raise ValueError("Invalid resume turn order")
+            game.step(turn["action"])
+            if snapshots[i]["ply"] != i or snapshots[i]["state"] != game.snapshot():
+                raise ValueError("Resume snapshot does not match replay")
+        if game.outcome() is not None:
+            raise ValueError("Cannot resume a terminal game")
+        if failure and failure["player"] != game.current_player:
+            raise ValueError("Failed turn player does not match the restored position")
+        for side, player in self.players.items():
+            old = record["players"][side]
+            if old["kind"] not in ("dsh", "codex") or old["kind"] != player.metadata["kind"] or not old.get("session_id"):
+                raise ValueError("Resume requires the original persistent harness sessions")
+        self.game = game
+        self.record = deepcopy(record)
+        self.record.setdefault("continuations", []).append({"at": now(), "from_ply": len(turns),
+            "previous_max_plies": record["max_plies"], "previous_ended_at": record["ended_at"],
+            "max_plies": self.max_plies, "previous_status":record["status"], "previous_error":record.get("error")})
+        if failure:
+            from .recovery import archive_failed_attempt
+            archive = archive_failed_attempt(self.directory, failure)
+            self.record["continuations"][-1].update(recovery=failure, archive=archive)
+            self.recovery_turn = failure["ply"]
+            self.recovery_evidence = failure
+        for side, player in self.players.items():
+            player.metadata.update(deepcopy(record["players"][side]))
+        self.record.update(status="starting", stop_reason=None, error=None, max_plies=self.max_plies,
+                           players={side: player.metadata for side, player in self.players.items()})
+        self.record.pop("ended_at", None)
 
     def event(self, kind: str, **data):
         with (self.directory / "events.jsonl").open("a", encoding="utf-8") as f:
@@ -102,8 +180,10 @@ class MatchRunner:
         self.persist()
 
     async def run(self):
-        self.event("match.started", game_id=self.game.game_id)
-        self.snapshot()
+        resumed = bool(self.record["snapshots"])
+        self.event("match.resumed" if resumed else "match.started", game_id=self.game.game_id,
+                   from_ply=len(self.record["turns"]), max_plies=self.max_plies)
+        self.snapshot(refresh=resumed)
         phase, player_id, ply = "startup", None, 0
         try:
             if getattr(self.game, "native_tools", False):
@@ -155,12 +235,15 @@ class MatchRunner:
                         "input": observation,
                         "explanation": explanation, "raw": raw, "elapsed_seconds": round(elapsed, 3),
                         "model": player.metadata.get("model"),
+                        "session_id": player.metadata.get("session_id"),
                         "reasoning_effort": player.metadata.get("reasoning_effort"),
                         "usage": deepcopy(player.metadata.get("usage"))}
                 if self.game_tools:
                     turn["tool_calls"] = deepcopy(self.game_tools.calls)
                 self.record["active_turn"] = None
                 self.record["turns"].append(turn)
+                if self.recovery_turn == ply:
+                    self.recovery_turn = None
                 self.record["last_elapsed_seconds"] = elapsed
                 self.event("turn.applied", **turn)
                 phase = "render"

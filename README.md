@@ -1,8 +1,8 @@
 # Amphoreus Arena v0.1
 
-一个用于验证原生 Agent Harness 对局的最小框架。当前支持中国象棋、9/19 路围棋、DSH ACP、Codex exec/resume。象棋规则由 `pyffish` 提供；围棋采用独立的面积计分、全局同形禁止规则模块。模型接收当前棋盘图、文本局面与合法着法并返回动作，渲染和结果判定由 Arena 完成；也可选择纯文本输入。
+一个用于验证原生 Agent Harness 对局的最小框架。当前支持中国象棋、9/19 路围棋、DSH ACP、Codex exec/resume。象棋规则由 `pyffish` 提供；围棋采用独立的面积计分、全局同形禁止规则模块。模型接收局面并返回动作，渲染和结果判定由 Arena 完成。原生围棋会话默认首次提供完整图文局面，后续使用增量输入；也可选择每手完整输入或纯文本输入。
 
-围棋入口、通用配置和插件扩展方式见 [围棋与游戏插件](docs/go-plugins.md)。`configs/go-9x9.json` 和 `configs/go-19x19.json` 默认均跑 4 手，象棋旧配置继续兼容。已完成 9 路真实对局（71 手认输终局）及 19 路真实短局（4 手）。
+围棋入口、通用配置和插件扩展方式见 [围棋与游戏插件](docs/go-plugins.md)。`configs/go-9x9.json` 和 `configs/go-19x19.json` 默认均跑 4 手，象棋旧配置继续兼容。已完成 9 路真实对局（71 手认输终局）、19 路真实短局（4 手），以及增量输入的 19 路完整对局（186 手白方认输终局）；验证记录见 [VALIDATION.md](VALIDATION.md)。
 
 可选 [原生工具终局流程](docs/go-agreement.md) 使用 `configs/go-19x19-agreement.json`：DSH / Codex 通过 MCP 提交、确认死子或请求争议续弈，参照中国 2002 规则的终局流程，原有规则继续保留。
 
@@ -30,20 +30,32 @@ python -m venv .venv
 
 `--until-end` 和 `--max-plies` 互斥；配置中 `max_plies: null` 同样表示无步数上限。`configs/vision-match.json` 使用已验证的图文组合：DSH `deepseek-flash / low`、Codex `gpt-6-astra / low`，无步数上限、无单步时限，并明确使用本机 `E:/dsh` 登录状态。默认的 12 手配置使用相同模型与强度，但继承环境中的 DSH_HOME。不会自动导出 GIF 或视频。
 
+在步数上限处正常停止的原生对局可用 `python -m amphoreus_arena resume <原输出目录> --config <原配置>` 取消步数上限继续到终局。续接前重放并核对全部局面，保留原 DSH ACP / Codex 会话 ID、工作区、增量输入与单步时限，写入 `checkpoint-NNNN.json` 和续接事件。默认入口拒绝运行中、失败或已有结果的棋局；模型、推理强度、规则和工具策略必须与原局一致。
+
+针对明确的 Codex 容量不足失败，可显式追加 `--retry-failed`。目前仅支持增量围棋中、没有回复/工具调用/动作提交，且原生同一会话记录确认 `server_overloaded` 的回合；其它失败仍拒绝恢复。恢复前将失败输入、调用日志、棋谱及报告复制到独立的 `attempts/NNNN-XX/` 并核对散列，再向原会话提供一次完整局面同步，之后恢复短增量。不会自动循环重试或更换模型；续接入口也不会向已有回复或提交状态不明的回合重发请求。
+
+DSH 返回棋点但被围棋规则拒绝时，可显式使用 `resume <原目录> --config <原配置> --retry-illegal`，与 `--retry-failed` 互斥。只接受行棋阶段的占用点、禁自杀或全局同形拒绝：必须在重放局面上复现同一错误、确认状态未改变、原生正常 end_turn、回复与协议一致，且无工具调用或动作提交。归档原尝试后，明确告知被拒绝的落点、原因和未提交事实，同步当前完整棋盘，让原会话重新决定；成功后恢复短增量。规则仍独立验证新动作；若再次非法会保留新失败并停止，不自动循环修正。
+
 历史配置 `configs/long-smoke.json` 保留首轮纯文本比赛设置：DSH 默认 ACP 模型、Codex `gpt-6-astra`，均为 low，180 秒时限。新图文对局使用 `vision-match.json`；仅切换 `--observation-mode` 不会自动更换模型或为旧配置补上视觉路由。
+
+原生 DSH / Codex 围棋默认 `prompt_mode: incremental`：每方的第一次输入包含规则、完整局面及配置的观察图；后续只发送该方上次动作的提交结果、对手新增动作、提子和必要的禁入点 / 协商状态，不再重发棋盘、历史、规则、合法动作列表或图片。上次思考用时写入 `your_last_turn.elapsed_seconds`；严格超过 120 秒时附加加快决策的提示，首次也说明 120 秒软目标，均不构成 timeout。规则模块继续验证动作。配置 `prompt_mode: full` 或传 `--prompt-mode full` 可恢复原输入方式；象棋和随机管线仍默认 full。
+
+起始输入 v2 使用精简规则说明和棋盘，不再枚举全盘合法坐标；以少量 `illegal_empty` 禁入点替代，规则模块仍独立验证动作。旧 v1 记录继续按原格式审计。围棋 CLI 默认允许对局工作区内的辅助工具与脚本，禁止安装、部署、实现或使用围棋对弈软件 / 引擎，以及向围棋 AI、外部服务或其他 agent 索取着法与分析。玩家配置 `allow_auxiliary_tools: false` 可保留旧权限行为。启用时 DSH 只选择 ACP 的单次许可，Codex 在该局独立工作区使用 `workspace-write`，不修改全局设置；这些对局约束不等于通用工具的防作弊强隔离。
+
+`configs/go-19x19-full-low.json` 是本机完整围棋配置：DSH `opencode-go/deepseek-v4.1-flash`、Codex `gpt-6.1-sol`，双方 low，无步数上限、无单步时限，使用协商规则与增量输入。运行时须使用新的输出目录。
 
 复制 `arena.example.json` 为 `arena.local.json` 可覆盖本机设置，也可通过 `--config path.json` 指定。两方的 `kind` 可以交换，支持 `dsh`、`codex`、`random`。配置项：
 
 | 位置 | 可选项 |
 |---|---|
-| 顶层 | `game`（xiangqi / go）、`game_options`、`players`、`max_plies`、`turn_timeout`（秒数或 null）、`startup_timeout`（秒数）、`observation_mode`（text / text_image）；旧象棋配置的 `red` / `black` / `initial_fen` 仍有效 |
-| DSH 玩家 | `desktop_exe`、`home`（DSH_HOME）、`reasoning_effort`、`model`（ACP 广告的完整 option value）、`patches`（启动前加载的 YAML 路径列表） |
-| Codex 玩家 | `executable`、`model`、`reasoning_effort` |
+| 顶层 | `game`（xiangqi / go）、`game_options`、`players`、`max_plies`、`turn_timeout`（秒数或 null）、`startup_timeout`（秒数）、`observation_mode`（text / text_image）、`prompt_mode`（full / incremental）；旧象棋配置的 `red` / `black` / `initial_fen` 仍有效 |
+| DSH 玩家 | `desktop_exe`、`home`（DSH_HOME）、`reasoning_effort`、`model`（ACP 广告的完整 option value）、`patches`（启动前加载的 YAML 路径列表）、`allow_auxiliary_tools`（布尔） |
+| Codex 玩家 | `executable`、`model`、`reasoning_effort`、`allow_auxiliary_tools`（布尔） |
 | 随机玩家 | `seed` |
 
 DSH 默认定位 `D:/Software/DeepSeekHarness/DeepSeek Harness.exe` 内置的 CLI，通过 `ELECTRON_RUN_AS_NODE=1` 启动 ACP，继承本机 `DSH_HOME` 和登录状态。它不使用 PATH 中可能较旧的 npm `dsh`。若安装位置不同，配置 `desktop_exe`。也支持 `command` 数组指定其他 ACP 启动程序；其 `--version` 应能正常退出。默认配置加载随 Python 包分发的视觉路由补丁；示例 JSON 中的相对补丁路径以运行命令的目录为基准，示例命令应从项目根目录执行。
 
-Codex 从 PATH 解析，也可配置绝对 `executable`。它使用原生 exec 和精确 session id resume，并通过 `--output-schema` 约束动作；保留本机账户配置，单次调用覆盖为只读、无需审批，以及对局指定的模型和推理强度。DSH 在 ACP 初始化前通过 `--patch` 选择 `deepseek-official / deepseek-flash`；只在初始化后切换模型不足以启用图片。补丁不改写 DSH 全局配置，实际未声明图片能力时会报错停止。最终采用的配置、两个 Harness 版本与 session id 都保存在记录中。此版本验证接入可行性，不代表公平棋力评测。
+Codex 从 PATH 解析，也可配置绝对 `executable`。它使用原生 exec 和精确 session id resume，并通过 `--output-schema` 约束动作；保留本机账户配置，单次调用覆盖对局指定的模型与推理强度；未启用辅助工具时为只读，启用时允许写入该局独立工作区，均不弹审批 UI。DSH 在 ACP 初始化前通过 `--patch` 选择 `deepseek-official / deepseek-flash`；只在初始化后切换模型不足以启用图片。补丁不改写 DSH 全局配置，实际未声明图片能力时会报错停止。最终采用的配置、两个 Harness 版本与 session id 都保存在记录中。此版本验证接入可行性，不代表公平棋力评测。
 
 ## 查看和导出
 
@@ -91,9 +103,9 @@ Agent 返回 `{"move":"h3e3","explanation":"简短中文落子说明"}`。`expla
 
 坐标采用 pyffish 原生的 a–i / 1–10；一个半回合指一方走一步。完整历史交给规则库，以便检测重复局面。库报告的可申领终局自动申领，未另行实现完整比赛裁决。达到 `max_plies` 是 `stopped`，没有胜负或和棋结果；真实终局才记录 `finished` 和 winner。回放明确区分这些状态。
 
-常规 CLI 对局默认使用 `text_image`：每手在落子前从当前局面生成 900×1000 棋盘观察图，同时提供 FEN、完整历史和当前合法着法。图中红下黑上、四边标坐标和行棋方，没有直播角色或落子后的信息。DSH 使用 ACP 图片块，Codex 首次和续接均使用原生 `--image`；每方仍复用自己的对局会话，每手只新附上当前图片。直播画面与模型观察图独立。
+`full` 输入模式默认使用 `text_image`：每手在落子前从当前局面生成 900×1000 棋盘观察图，同时提供 FEN、完整历史和当前合法着法。图中红下黑上、四边标坐标和行棋方，没有直播角色或落子后的信息。DSH 使用 ACP 图片块，Codex 首次和续接均使用原生 `--image`；每方仍复用自己的对局会话，每手只新附上当前图片。直播画面与模型观察图独立。
 
-图文提示词仅在原提示词前增加“附件是落子前的当前局面，存在分歧以文本为准”的说明；合法列表继续约束实际动作，仍返回 1–2 句公开落子说明。`--observation-mode text` 保留原文本提示词，不附图。此次未叠加新的规则提示、后继局面查询工具或自动纠错，图片也不能保证消除模型的后继推演错误。提示词要求不调用工具，DSH 权限请求会取消，Codex 使用只读模式；这不是对所有原生 Harness 工具的强隔离。
+图文提示词仅在原提示词前增加“附件是落子前的当前局面，存在分歧以文本为准”的说明；合法列表继续约束实际动作，仍返回 1–2 句公开落子说明。`--observation-mode text` 保留原文本提示词，不附图。此次未叠加新的规则提示、后继局面查询工具或自动纠错，图片也不能保证消除模型的后继推演错误。象棋保留原工具限制；围棋采用上述辅助工具策略，禁止将着法选择交给围棋软件、引擎或 AI。
 
 ## 读图与固定局面对照
 

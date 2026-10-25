@@ -22,13 +22,13 @@ STONES = {"type": "array", "items": {"type": "string"}, "maxItems": 361,
 TOOLS = [
     {"name": "go_get_state", "description": "Read the current Go position, agreement proposal and your seat.",
      "inputSchema": schema({}), "annotations": {"readOnlyHint": True}},
-    {"name": "go_preview_score", "description": "Preview area score after hypothetical dead-group removal. Does not verify death or submit a decision.",
+    {"name": "go_preview_score", "description": "Agreement phase only: preview area score after hypothetical dead-group removal. Does not verify death or submit a decision.",
      "inputSchema": schema({"stones": STONES}), "annotations": {"readOnlyHint": True}},
-    {"name": "go_propose_dead", "description": "Submit your complete dead-group proposal for the opponent to review. Does not remove stones. After success return move=tool.",
+    {"name": "go_propose_dead", "description": "Agreement phase only: submit your complete dead-group proposal for the opponent to review. Does not remove stones. After success return move=tool.",
      "inputSchema": schema({"stones": STONES, "revision": REVISION})},
-    {"name": "go_accept_dead", "description": "Accept the opponent's exact proposal and end the game with agreed area scoring. After success return move=tool.",
+    {"name": "go_accept_dead", "description": "Agreement phase only: accept the opponent's exact proposal and end the game with agreed area scoring. After success return move=tool.",
      "inputSchema": schema({"proposal_id": {"type": "string"}, "revision": REVISION})},
-    {"name": "go_resume_play", "description": "Dispute a stone's status and resume with the player claiming it dead first. Listed stone: you claim it alive; unlisted: you claim it dead. Without a proposal use null and the first passer resumes. Preserves board and ko history. After success return move=tool.",
+    {"name": "go_resume_play", "description": "Agreement phase only: dispute a stone's status and resume with the player claiming it dead first. Listed stone: you claim it alive; unlisted: you claim it dead. Without a proposal use null and the first passer resumes. Preserves board and ko history. After success return move=tool.",
      "inputSchema": schema({"revision": REVISION, "disputed_stone": {"type": ["string", "null"]}})},
 ]
 for tool in TOOLS:

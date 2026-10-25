@@ -7,6 +7,7 @@ from copy import deepcopy
 import json
 
 from .go import GoGame, RULESET
+from .go_prompt import go_instructions
 
 AGREEMENT_RULESET = "area-positional-agreement-v1"
 CONTROL_MOVES = {"propose_dead", "accept_dead", "resume_play"}
@@ -46,26 +47,7 @@ class AgreementGoGame(GoGame):
         return schema
 
     def prompt(self):
-        return (
-            f"Play {self.board_size}x{self.board_size} Go as {self.current_player}. "
-            "Only the arena_go MCP tools are allowed; do not use other tools, files, engines or agents. "
-            "Coordinates skip I, ranks increase bottom to top; board rows are top to bottom. "
-            "No suicide; positional superko includes the complete history, including after resuming. "
-            f"Area scoring, white komi {self.komi:g}; prisoners add no extra points. "
-            "Two passes open dead-stone agreement, not immediate scoring. "
-            "In agreement phase, independently assess life/death. Call go_get_state if needed. "
-            "Use go_preview_score for a hypothetical dead list; it does not confirm anything. "
-            "With no proposal, call go_propose_dead with one or more representatives of every dead group "
-            "of either color (empty list means all stones live). With a proposal, call go_accept_dead "
-            "only if you agree with the entire list; otherwise call go_resume_play naming a disputed_stone. "
-            "A listed disputed stone means you claim it alive; an unlisted stone means you claim it dead. "
-            "Only one decision tool per turn. The player claiming death plays first; without a "
-            "proposal use disputed_stone=null and the first passer plays first. Never unilaterally remove stones. "
-            "After a successful decision tool return move=tool; Arena commits that exact decision. "
-            "During play choose from legal_moves and return the coordinate/pass/resign directly. "
-            'Return ONLY JSON {"move":"...","explanation":"1-2句中文公开说明"}. '
-            "Do not reveal internal reasoning.\n" + json.dumps(self.observation(), ensure_ascii=False)
-        )
+        return go_instructions(self) + "\n" + json.dumps(self.observation(), ensure_ascii=False)
 
     def dead_points(self, stones):
         if not isinstance(stones, list) or any(not isinstance(s, str) for s in stones):

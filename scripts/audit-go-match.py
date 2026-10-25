@@ -13,6 +13,7 @@ import tempfile
 from amphoreus_arena.go_agreement import create_go, CONTROL_MOVES
 from copy import deepcopy
 from amphoreus_arena.go_rendering import render_go_observation
+from amphoreus_arena.go_session import session_input, recovery_input, recovery_rejection
 
 
 def read_json(path):
@@ -42,6 +43,16 @@ def audit(directory):
             manifest = read_json(directory / f"observations/{index:04d}.json")
             prompt_path = directory / observation["prompt"]["path"]
             supplied = json.loads(prompt_path.read_text(encoding="utf-8").split("\n", 1)[1])
+            expected_observation, expected_schema = game.observation(), game.action_schema()
+            input_details = {}
+            if record.get("prompt_mode", "full") == "incremental":
+                if observation.get("kind") == "recovery":
+                    expected_prompt, expected_schema, input_details = recovery_input(game, record["turns"][:index-1], snapshots,
+                                                                                   rejection=recovery_rejection(record,index))
+                else:
+                    expected_prompt, expected_schema, input_details = session_input(
+                        game, record["turns"][:index - 1], snapshots, version=observation.get("input_version", 1))
+                expected_observation = json.loads(expected_prompt.split("\n", 1)[1])
             valid = move in game.legal_actions()
             if move in CONTROL_MOVES:
                 deepcopy(game).step(turn["action"])
@@ -52,9 +63,10 @@ def audit(directory):
             checks = {
                 "turn_order": index == turn["ply"] and side == game.current_player,
                 "legal": valid,
-                "observation": supplied == game.observation(),
+                "observation": supplied == expected_observation,
+                "session_input": all(observation.get(k) == v for k, v in input_details.items()),
                 "input_state": manifest["state"] == game.snapshot() and observation["source_ply"] == index - 1,
-                "action_schema": manifest["action_schema"] == game.action_schema(),
+                "action_schema": manifest["action_schema"] == expected_schema,
                 "prompt_hash": digest(prompt_path) == observation["prompt"]["sha256"],
             }
             if observation["mode"] == "text_image":

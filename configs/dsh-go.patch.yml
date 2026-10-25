@@ -1,0 +1,9 @@
+- id: acp
+  config:
+    provider: opencode-go
+    model: deepseek-v4.1-flash
+- id: llm-pi-ai
+  config:
+    providers:
+      opencode-go:
+        apiKeyEnv: OPENCODE_GO_API_KEY

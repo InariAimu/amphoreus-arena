@@ -63,7 +63,7 @@ class ScriptedMcpPlayer:
         await stop(self.process)
 
 
-async def prepare(root, images=True):
+async def prepare(root, images=True, prompt_mode="full"):
     root.mkdir(parents=True, exist_ok=False)
     opening = ["A2", "A1", "B2", "T19", "C1", "T18", "pass", "pass"]
     propose = {"tool": "propose_dead", "stones": ["A1"]}
@@ -79,7 +79,7 @@ async def prepare(root, images=True):
         players = {side: ScriptedMcpPlayer(moves[i::2]) for i, side in enumerate(("black", "white"))}
         runner = MatchRunner(AgreementGoGame(), players, GoRenderer(), root/name, len(moves), 10,
                              observation_mode="text_image" if images else "text",
-                             observation_renderer=render_go_observation)
+                             observation_renderer=render_go_observation, prompt_mode=prompt_mode)
         runner.record["game_options"] = {"board_size": 19, "komi": 7.5, "rules": AGREEMENT_RULESET}
         record = await runner.run()
         if record["status"] != "finished":
@@ -91,4 +91,6 @@ async def prepare(root, images=True):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", required=True, type=Path)
-    asyncio.run(prepare(parser.parse_args().output.resolve()))
+    parser.add_argument("--prompt-mode", choices=["full", "incremental"], default="full")
+    args = parser.parse_args()
+    asyncio.run(prepare(args.output.resolve(), prompt_mode=args.prompt_mode))

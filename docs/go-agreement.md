@@ -27,6 +27,8 @@
 
 ## 原生 MCP 工具
 
+起始提示只说明必要棋规和进入协商的方式，具体操作参数与争议续弈顺序由工具描述承载。围棋 CLI 默认允许本局工作区内的辅助工具与脚本；禁止安装、部署、实现或使用围棋对弈软件 / 引擎，或借助围棋 AI / 外部 agent 获取着法或分析。`allow_auxiliary_tools` 只影响本局原生权限：DSH 单次许可、Codex 工作区可写；不是防引擎使用的强制安全隔离。
+
 DSH 通过 ACP `session/new.mcpServers` 接入，Codex 通过本次调用的 `mcp_servers.arena_go` 配置接入，包括精确 session resume。不会写入用户的全局 MCP 配置。Codex 配置参数统一放在 `exec` 前，避免本机 CLI 的跨子命令 `-c` 列表覆盖问题。配置形式参考 [OpenAI MCP 文档](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)。
 
 | 工具 | 作用 |

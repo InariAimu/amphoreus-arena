@@ -8,6 +8,8 @@ passing; remaining stones are counted as they stand. Passes are superko-exempt.
 import json
 import math
 
+from .go_prompt import go_instructions
+
 
 RULESET = "area-positional-v1"
 COLUMNS = "ABCDEFGHJKLMNOPQRST"  # GTP-style coordinates skip I.
@@ -129,25 +131,7 @@ class GoGame:
                 "required": ["move", "explanation"], "additionalProperties": False}
 
     def prompt(self) -> str:
-        return (
-            f"Play one move in a {self.board_size}x{self.board_size} Go match. "
-            f"You control {self.current_player}. Play to win using only the supplied position. "
-            "Do not use tools, files, engines, web search or other agents. "
-            f"Coordinates: columns {COLUMNS[:self.board_size]} (I is skipped), "
-            f"ranks 1-{self.board_size} from bottom to top. Board rows are top to bottom; "
-            "B=black, W=white, .=empty. Black plays first. "
-            "Rules: no suicide; positional superko forbids repeating ANY earlier board; "
-            "pass is exempt. Two consecutive passes end the game. "
-            "Area score counts stones plus empty regions bordered only by your color; "
-            f"White receives {self.komi:g} komi. Capture dead stones and finish boundaries "
-            "before passing: remaining stones count as they stand, without dead-stone adjudication. "
-            "Captured stones do not add separate points. Resign concedes the game. "
-            "The legal_moves list is authoritative: select exactly one member. "
-            'Return ONLY JSON, e.g. {"move":"D4","explanation":"占据角部，准备向边上展开。"}. '
-            "Use move=pass to pass or move=resign to concede. Explanation is a public "
-            "1-2 sentence Chinese summary of purpose and risk, not internal reasoning.\n"
-            + json.dumps(self.observation(), ensure_ascii=False)
-        )
+        return go_instructions(self) + "\n" + json.dumps(self.observation(), ensure_ascii=False)
 
     def step(self, action: dict) -> None:
         if self._result is not None:

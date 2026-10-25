@@ -25,9 +25,13 @@ for line in sys.stdin:
     if method == "initialize":
         print("[test launcher] diagnostic on stdout", flush=True)
         result = {"protocolVersion": 1, "agentInfo": {"version": "test"},
-                  "agentCapabilities": {"promptCapabilities": {"image": True}}}
+                  "agentCapabilities": {"promptCapabilities": {"image": True},
+                                        "sessionCapabilities": {"resume": {}}}}
     elif method == "session/new":
         result = {"sessionId": "stable-test-session", "configOptions": []}
+    elif method == "session/resume":
+        assert request["params"]["sessionId"] == "stable-test-session"
+        result = {"configOptions": []}
     elif method == "session/prompt":
         send({"method": "session/update", "params": {"sessionId": "stable-test-session",
               "update": {"sessionUpdate": "usage_update", "used": 7074, "size": 1000000}}})
@@ -42,6 +46,14 @@ for line in sys.stdin:
             observation = json.loads(prompt.split("\n", 1)[1])
             chunks = [json.dumps({"move": observation["legal_moves"][0],
                                   "explanation": hashlib.sha256(data).hexdigest() if images else "text only"})]
+        if "--go-session" in sys.argv:
+            prompt = next(part["text"] for part in request["params"]["prompt"] if part["type"] == "text")
+            observation = json.loads(prompt.split("\n", 1)[1])
+            source = observation.get("source_ply", observation.get("ply"))
+            move = ["A2", "A1", "B2", "J9", "C1", "J8", "B1", "J7"][source]
+            if "--illegal-go" in sys.argv and source == 4:
+                move = "A2"
+            chunks = [json.dumps({"move": move, "explanation": "Local Go session fixture"})]
         for text in chunks:
             send({"method": "session/update", "params": {"sessionId": "stable-test-session",
                   "update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": text}}}})

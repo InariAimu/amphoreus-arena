@@ -16,6 +16,13 @@ def write_json(path: Path, value: object) -> None:
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def auxiliary_tools_enabled(config):
+    enabled = config.get("allow_auxiliary_tools", False)
+    if type(enabled) is not bool:
+        raise ValueError("allow_auxiliary_tools must be a boolean")
+    return enabled
+
+
 def image_inputs(directory: Path, ply: int, images: list[Path] | None) -> list[dict]:
     """Record exact image bytes separately from native transport logs."""
     entries = []
@@ -66,9 +73,11 @@ def dsh_command(config: dict) -> tuple[list[str], dict[str, str]]:
 class DshHarness:
     def __init__(self, config: dict, directory: Path):
         self.config, self.directory = config, directory
+        self.allow_auxiliary_tools = auxiliary_tools_enabled(config)
         self.workspace = directory / "workspace"
         self.workspace.mkdir(parents=True, exist_ok=True)
-        self.metadata = {"kind": "dsh", "transport": "acp", "session_id": None}
+        self.metadata = {"kind": "dsh", "transport": "acp", "session_id": None,
+                         "allow_auxiliary_tools": self.allow_auxiliary_tools}
         self.process = None
         self.reader_task = None
         self.pending: dict[int, asyncio.Future] = {}
@@ -144,7 +153,7 @@ class DshHarness:
                 self.update_config_options(update.get("configOptions", []))
             if update.get("sessionUpdate") == "usage_update":
                 self.metadata["usage"] = dsh_usage(update)
-            if self.game_tools and update.get("sessionUpdate") == "tool_call":
+            if (self.game_tools or self.allow_auxiliary_tools) and update.get("sessionUpdate") == "tool_call":
                 # ACP streams commentary before tool calls in the same prompt.
                 # The final answer is the text following the last tool call;
                 # retain the complete transcript separately, without JSON scraping.
@@ -156,8 +165,13 @@ class DshHarness:
                     self.all_messages.append(content["text"])
         elif "id" in frame:
             if frame["method"] == "session/request_permission":
-                # The smoke game needs no external tools; never hang on a permission UI.
                 result = {"outcome": {"outcome": "cancelled"}}
+                if self.allow_auxiliary_tools:
+                    # Match-local opt-in. Never grant a lasting allow-always rule.
+                    option = next((o for o in frame.get("params", {}).get("options", [])
+                                   if o.get("kind") == "allow_once" and o.get("optionId")), None)
+                    if option:
+                        result = {"outcome": {"outcome": "selected", "optionId": option["optionId"]}}
                 await self.send({"jsonrpc": "2.0", "id": frame["id"], "result": result})
             else:
                 await self.send({"jsonrpc": "2.0", "id": frame["id"],
@@ -188,7 +202,7 @@ class DshHarness:
             self.metadata["version"] = out.decode(errors="replace").strip()
         finally:
             await stop(version)
-        self.stderr_file = (self.directory / "stderr.log").open("wb")
+        self.stderr_file = (self.directory / "stderr.log").open("ab" if self.metadata.get("session_id") else "wb")
         self.process = await spawn(command, env=env, cwd=str(self.workspace),
                                    stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
                                    stderr=self.stderr_file, limit=4 * 1024 * 1024)
@@ -201,14 +215,25 @@ class DshHarness:
         if self.game_tools:
             servers = [{**self.game_tools, "env": [{"name": key, "value": value}
                                                    for key, value in self.game_tools["env"].items()]}]
-        session = await self.rpc("session/new", {"cwd": str(self.workspace.resolve()), "mcpServers": servers})
-        self.metadata["session_id"] = session["sessionId"]
+        params = {"cwd": str(self.workspace.resolve()), "mcpServers": servers}
+        session_id = self.metadata.get("session_id")
+        if session_id:
+            if "resume" not in self.metadata["agent_capabilities"].get("sessionCapabilities", {}):
+                raise RuntimeError("DSH ACP did not advertise session resume")
+            params["sessionId"] = session_id
+            session = await self.rpc("session/resume", params)
+            if session.get("sessionId", session_id) != session_id:
+                raise RuntimeError("DSH ACP resumed a different session")
+        else:
+            session = await self.rpc("session/new", params)
+            session_id = session["sessionId"]
+        self.metadata["session_id"] = session_id
         self.update_config_options(session.get("configOptions", []))
         for option_id, value in (("model", self.config.get("model")),
                                  ("reasoning_effort", self.config.get("reasoning_effort"))):
             if value:
                 result = await self.rpc("session/set_config_option", {
-                    "sessionId": session["sessionId"], "configId": option_id, "value": value})
+                    "sessionId": session_id, "configId": option_id, "value": value})
                 self.update_config_options(result.get("configOptions", []))
 
     async def act(self, prompt: str, schema: dict, ply: int, images: list[Path] | None = None) -> str:
@@ -225,7 +250,7 @@ class DshHarness:
         result = await self.rpc("session/prompt", {"sessionId": self.metadata["session_id"],
                                                    "prompt": content})
         raw = "".join(self.messages)
-        if self.game_tools:
+        if self.game_tools or self.allow_auxiliary_tools:
             (self.directory / f"{ply:04d}.transcript.txt").write_text("".join(self.all_messages), encoding="utf-8")
         (self.directory / f"{ply:04d}.response.txt").write_text(raw, encoding="utf-8")
         if result.get("stopReason") != "end_turn":
@@ -252,6 +277,7 @@ class DshHarness:
 class CodexHarness:
     def __init__(self, config: dict, directory: Path):
         self.config, self.directory = config, directory
+        self.allow_auxiliary_tools = auxiliary_tools_enabled(config)
         self.workspace = directory / "workspace"
         self.workspace.mkdir(parents=True, exist_ok=True)
         self.executable = config.get("executable") or shutil.which("codex")
@@ -262,6 +288,7 @@ class CodexHarness:
         self.session_log_offset = 0
         self.game_tools = None
         self.metadata = {"kind": "codex", "transport": "exec/resume", "session_id": None,
+                         "allow_auxiliary_tools": self.allow_auxiliary_tools,
                          "requested_model": config.get("model", "inherited"),
                          "model": config.get("model"), "model_source": "configured" if config.get("model") else "pending",
                          "reasoning_effort": config.get("reasoning_effort", "low")}
@@ -304,8 +331,9 @@ class CodexHarness:
             await stop(process)
 
     def command(self, schema_file: Path, answer_file: Path, images: list[Path] | None = None) -> list[str]:
+        sandbox = "workspace-write" if self.allow_auxiliary_tools else "read-only"
         command = [self.executable, "-c", 'approval_policy="never"',
-                   "-c", 'sandbox_mode="read-only"']
+                   "-c", f'sandbox_mode="{sandbox}"']
         if self.game_tools:
             connection = self.game_tools
             values = {"command": connection["command"], "args": connection["args"],
